@@ -48,6 +48,14 @@ pub(crate) struct InnerSimpleCache<K, V, N: Now> {
 ///
 /// The cache is implemented as a simple [RwLock] with [HashMap].
 ///
+/// Implementation details and considerations:
+/// * For simplicity sake, expired entries are removed upon the next retrieval. \
+///   Only if the value is expired, a write lock is acquired, so when the expiry feature is not used, parallel reads are possible. \
+///   It would make sense to add a function that scans for expired keys and removes them to cleanup without remembering the keys, or
+///   alternatively expose the internal [HashMap] iterator to walk over all entries.
+/// * Memory usage is equivalent to HashMap memory usage, plus a wrapper around the value to store [Ttl]
+/// * There is no limit on the cache size, so no LRU or other expiry mechanism is implemented.
+///
 /// The required performance targets are:
 /// * Retrieving a key within 1ms for 95th percentile
 /// * Retrieving a key within 5ms for 99th percentile
@@ -79,7 +87,7 @@ impl<K: Eq + Hash, V: Clone> SimpleCache<K, V> {
     pub fn new() -> Self {
         SimpleCache {
             inner: Arc::new(RwLock::new(InnerSimpleCache {
-                items: HashMap::with_capacity(10_000_000),
+                items: HashMap::new(),
                 now: InstantNow,
             })),
         }
