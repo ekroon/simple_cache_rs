@@ -1,5 +1,6 @@
 //! This crate implements a simple caching structure
 use crate::Ttl::{Bounded, Unbounded};
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Add;
@@ -71,19 +72,24 @@ pub(crate) struct InnerSimpleCache<K, V, N: Now> {
 #[derive(Clone)]
 pub struct SimpleCache<K, V, N = InstantNow>
 where
-    K: Eq + Hash,
     N: Now,
 {
     inner: Arc<RwLock<InnerSimpleCache<K, V, N>>>,
 }
 
-impl<K: Eq + Hash, V: Clone> Default for SimpleCache<K, V> {
+impl<K, V> Default for SimpleCache<K, V>
+where
+    K: Eq + Hash,
+{
     fn default() -> Self {
         SimpleCache::new()
     }
 }
 
-impl<K: Eq + Hash, V: Clone> SimpleCache<K, V> {
+impl<K, V> SimpleCache<K, V>
+where
+    K: Eq + Hash,
+{
     pub fn new() -> Self {
         SimpleCache {
             inner: Arc::new(RwLock::new(InnerSimpleCache {
@@ -115,13 +121,22 @@ impl<K: Eq + Hash, V: Clone> SimpleCache<K, V> {
     }
 
     /// Remove a key from the cache, returns value if available.
-    pub fn remove(&self, key: &K) -> Option<V> {
+    pub fn remove<Q>(&self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Eq + Hash,
+    {
         let mut inner = self.inner.write().unwrap();
         inner.items.remove(key).map(|v| v.value)
     }
 
     /// Retrieve a key from the cache, clones the value.
-    pub fn retrieve(&self, key: &K) -> Option<V> {
+    pub fn retrieve<Q>(&self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Eq + Hash,
+        V: Clone,
+    {
         let mut found_expired = false;
         let result;
         {
