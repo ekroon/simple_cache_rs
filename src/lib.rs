@@ -3,7 +3,7 @@ use crate::Ttl::{Bounded, Unbounded};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::ops::Add;
+use std::ops::{Add, Deref};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -137,26 +137,44 @@ where
         Q: Eq + Hash,
         V: Clone,
     {
-        let mut found_expired = false;
+        let found_expired;
         let result;
         {
             let inner = self.inner.read().unwrap();
-            result = inner.items.get(key).and_then(|v| match v.ttl {
-                Unbounded => Some(v.value.clone()),
-                Bounded(instant) => {
-                    if inner.now.now() <= instant {
-                        Some(v.value.clone())
-                    } else {
-                        found_expired = true;
-                        None
-                    }
-                }
-            });
+            let retrieved = <SimpleCache<K, V>>::retrieve_item(key, inner);
+            found_expired = retrieved.0;
+            result = retrieved.1;
         }
         if found_expired {
-            self.remove(key);
+            let found_expired;
+            let inner = self.inner.write().unwrap();
+            found_expired = <SimpleCache<K, V>>::retrieve_item(key, inner).0;
+            if found_expired {
+                self.remove(key);
+            }
         }
         result
+    }
+
+    fn retrieve_item<Q>(
+        key: &Q,
+        inner: impl Deref<Target = InnerSimpleCache<K, V, InstantNow>>,
+    ) -> (bool, Option<V>)
+    where
+        K: Borrow<Q>,
+        Q: Eq + Hash,
+        V: Clone,
+    {
+        inner.items.get(key).map_or((false, None), |v| match v.ttl {
+            Unbounded => (false, Some(v.value.clone())),
+            Bounded(instant) => {
+                if inner.now.now() <= instant {
+                    (false, Some(v.value.clone()))
+                } else {
+                    (true, None)
+                }
+            }
+        })
     }
 }
 
@@ -240,7 +258,6 @@ mod tests {
             assert_eq!(j, cache.retrieve(&j).unwrap());
         }
         let stop = Instant::now();
-        dbg!((stop - start) / 10_000_000);
         assert!(stop < start.add(Duration::from_secs(10)));
     }
 
@@ -257,7 +274,31 @@ mod tests {
             assert_eq!(None, cache.retrieve(&j));
         }
         let stop = Instant::now();
-        dbg!((stop - start) / 10_000_000);
         assert!(stop < start.add(Duration::from_secs(20)));
+    }
+
+    #[test]
+    fn multithreaded_expire() {
+        let cache = SimpleCache::new();
+        cache.cache_ttl(1, "a", Duration::from_millis(0));
+        (0..300_i32)
+            .map(|i| {
+                let cache = cache.clone();
+                if i == 50 {
+                    thread::spawn(move || {
+                        cache.cache(1, "b");
+                    })
+                } else {
+                    thread::spawn(move || {
+                        cache.retrieve(&1);
+                    })
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .for_each(|t| {
+                t.join().unwrap();
+            });
+        assert_eq!(Some("b"), cache.retrieve(&1));
     }
 }
